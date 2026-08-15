@@ -1,0 +1,10 @@
+requests
+pydantic
+tenacity
+boto3
+python-dotenv
+pandas
+polars
+pytest
+sqlalchemy
+psycopg2-binary
