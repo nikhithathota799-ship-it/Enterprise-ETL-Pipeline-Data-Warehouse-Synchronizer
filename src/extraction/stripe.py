@@ -6,6 +6,12 @@ import requests
 from dotenv import load_dotenv
 from tenacity import retry, stop_after_attempt, wait_exponential
 
+from src.models.external_models import (
+    StripeCustomer,
+    StripeCharge,
+    StripeInvoice,
+)
+
 
 # ============================================================
 # LOAD .ENV
@@ -32,7 +38,8 @@ RAW_FOLDER.mkdir(parents=True, exist_ok=True)
 class StripeExtractor:
     """
     Extracts Stripe data using API Key authentication.
-    Handles retries, cursor-based pagination and saves raw JSON data.
+    Handles retries, cursor-based pagination, validates records
+    with Pydantic models, and saves raw JSON data.
     """
 
     BASE_URL = "https://api.stripe.com/v1"
@@ -122,31 +129,60 @@ class StripeExtractor:
         return all_records
 
     # ========================================================
+    # VALIDATION
+    # ========================================================
+
+    def validate_records(self, records, model, label):
+        """
+        Validate raw records against a Pydantic model.
+        Invalid records are logged and skipped, not silently dropped.
+        """
+
+        valid_records = []
+
+        for record in records:
+            try:
+                validated = model.model_validate(record)
+                valid_records.append(validated.model_dump(mode="json"))
+            except Exception as error:
+                print(
+                    f"Skipping invalid {label} record "
+                    f"(id={record.get('id', 'unknown')}): {error}"
+                )
+
+        print(f"Validated {len(valid_records)}/{len(records)} {label} records")
+
+        return valid_records
+
+    # ========================================================
     # CUSTOMERS
     # ========================================================
 
     def extract_customers(self):
-        """Extract Customer records."""
+        """Extract and validate Customer records."""
 
-        return self.fetch_all_records("customers")
+        raw_records = self.fetch_all_records("customers")
+        return self.validate_records(raw_records, StripeCustomer, "customer")
 
     # ========================================================
     # CHARGES
     # ========================================================
 
     def extract_charges(self):
-        """Extract Charge records."""
+        """Extract and validate Charge records."""
 
-        return self.fetch_all_records("charges")
+        raw_records = self.fetch_all_records("charges")
+        return self.validate_records(raw_records, StripeCharge, "charge")
 
     # ========================================================
     # INVOICES
     # ========================================================
 
     def extract_invoices(self):
-        """Extract Invoice records."""
+        """Extract and validate Invoice records."""
 
-        return self.fetch_all_records("invoices")
+        raw_records = self.fetch_all_records("invoices")
+        return self.validate_records(raw_records, StripeInvoice, "invoice")
 
 
 # ============================================================
