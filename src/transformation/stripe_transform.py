@@ -2,10 +2,10 @@ import json
 from pathlib import Path
 from datetime import datetime, timezone
 
-from src.models.salesforce_models import (
-    SalesforceAccount,
-    SalesforceContact,
-    SalesforceOpportunity,
+from src.models.external_models import (
+    StripeCustomer,
+    StripeCharge,
+    StripeInvoice,
 )
 
 
@@ -15,13 +15,13 @@ from src.models.salesforce_models import (
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
-RAW_FOLDER = PROJECT_ROOT / "data" / "raw" / "salesforce"
+RAW_FOLDER = PROJECT_ROOT / "data" / "raw" / "stripe"
 
 PROCESSED_FOLDER = (
     PROJECT_ROOT
     / "data"
     / "processed"
-    / "salesforce"
+    / "stripe"
 )
 
 PROCESSED_FOLDER.mkdir(
@@ -35,6 +35,8 @@ PROCESSED_FOLDER.mkdir(
 # ============================================================
 
 def load_json(filename):
+    """Load JSON data from the Stripe raw-data folder."""
+
     file_path = RAW_FOLDER / filename
 
     if not file_path.exists():
@@ -55,11 +57,22 @@ def load_json(filename):
 # ============================================================
 
 def get_records(data):
+    """
+    Get records from Stripe JSON.
+
+    Supports:
+    1. Stripe list response: {"data": [...]}
+    2. Direct list: [...]
+    """
+
     if isinstance(data, dict):
-        records = data.get("records", [])
+
+        records = data.get("data", [])
 
         if not isinstance(records, list):
-            raise ValueError("'records' must be a list")
+            raise ValueError(
+                "'data' must be a list"
+            )
 
         return records
 
@@ -67,7 +80,7 @@ def get_records(data):
         return data
 
     raise ValueError(
-        "Invalid JSON format. Expected list or dictionary."
+        "Invalid JSON format."
     )
 
 
@@ -77,16 +90,16 @@ def get_records(data):
 
 def clean_value(value):
     """
-    Clean individual values.
+    Clean string values.
 
-    - Removes extra spaces
-    - Converts empty strings to None
+    Empty strings are converted to None.
     """
 
     if value is None:
         return None
 
     if isinstance(value, str):
+
         value = value.strip()
 
         if value == "":
@@ -101,7 +114,7 @@ def clean_value(value):
 
 def remove_duplicates(records):
     """
-    Remove duplicate records using Salesforce Id.
+    Remove duplicate Stripe records using their id.
     """
 
     unique_records = []
@@ -113,9 +126,9 @@ def remove_duplicates(records):
         if not isinstance(record, dict):
             continue
 
-        record_id = record.get("Id")
+        record_id = record.get("id")
 
-        # Keep records without Id for validation later
+        # Keep records without ID for validation
         if not record_id:
             unique_records.append(record)
             continue
@@ -125,90 +138,147 @@ def remove_duplicates(records):
             continue
 
         seen_ids.add(record_id)
+
         unique_records.append(record)
 
     print(
-        f"Duplicate records removed: {duplicate_count}"
+        f"Duplicate records removed: "
+        f"{duplicate_count}"
     )
 
     return unique_records
 
 
 # ============================================================
-# VALIDATE ACCOUNT
+# VALIDATE CUSTOMER
 # ============================================================
 
-def validate_account(record):
-    """
-    Convert Salesforce Account fields
-    into Pydantic model fields and validate.
-    """
+def validate_customer(record):
+    """Validate a Stripe Customer."""
 
-    account_data = {
-        "id": clean_value(record.get("Id")),
-        "name": clean_value(record.get("Name")),
-        "industry": clean_value(record.get("Industry")),
-        "phone": clean_value(record.get("Phone")),
-        "website": clean_value(record.get("Website")),
+    customer_data = {
+        "id": clean_value(record.get("id")),
+        "object": clean_value(
+            record.get("object")
+        ) or "customer",
+        "email": clean_value(
+            record.get("email")
+        ),
+        "name": clean_value(
+            record.get("name")
+        ),
+        "created": record.get("created"),
+        "currency": clean_value(
+            record.get("currency")
+        ),
+        "delinquent": record.get(
+            "delinquent"
+        ),
+        "livemode": record.get(
+            "livemode",
+            False
+        ),
     }
 
-    validated = SalesforceAccount.model_validate(
-        account_data
+    validated = StripeCustomer.model_validate(
+        customer_data
     )
 
-    return validated.model_dump(mode="json")
+    return validated.model_dump(
+        mode="json"
+    )
 
 
 # ============================================================
-# VALIDATE CONTACT
+# VALIDATE CHARGE
 # ============================================================
 
-def validate_contact(record):
-    """
-    Convert Salesforce Contact fields
-    into Pydantic model fields and validate.
-    """
+def validate_charge(record):
+    """Validate a Stripe Charge."""
 
-    contact_data = {
-        "id": clean_value(record.get("Id")),
-        "first_name": clean_value(record.get("FirstName")),
-        "last_name": clean_value(record.get("LastName")),
-        "email": clean_value(record.get("Email")),
-        "phone": clean_value(record.get("Phone")),
-        "account_id": clean_value(record.get("AccountId")),
+    charge_data = {
+        "id": clean_value(
+            record.get("id")
+        ),
+        "object": clean_value(
+            record.get("object")
+        ) or "charge",
+        "amount": record.get(
+            "amount"
+        ),
+        "currency": clean_value(
+            record.get("currency")
+        ),
+        "customer": clean_value(
+            record.get("customer")
+        ),
+        "status": clean_value(
+            record.get("status")
+        ),
+        "paid": record.get(
+            "paid"
+        ),
+        "refunded": record.get(
+            "refunded"
+        ),
+        "created": record.get(
+            "created"
+        ),
+        "description": clean_value(
+            record.get("description")
+        ),
     }
 
-    validated = SalesforceContact.model_validate(
-        contact_data
+    validated = StripeCharge.model_validate(
+        charge_data
     )
 
-    return validated.model_dump(mode="json")
+    return validated.model_dump(
+        mode="json"
+    )
 
 
 # ============================================================
-# VALIDATE OPPORTUNITY
+# VALIDATE INVOICE
 # ============================================================
 
-def validate_opportunity(record):
-    """
-    Convert Salesforce Opportunity fields
-    into Pydantic model fields and validate.
-    """
+def validate_invoice(record):
+    """Validate a Stripe Invoice."""
 
-    opportunity_data = {
-        "id": clean_value(record.get("Id")),
-        "name": clean_value(record.get("Name")),
-        "stage_name": clean_value(record.get("StageName")),
-        "amount": record.get("Amount"),
-        "close_date": clean_value(record.get("CloseDate")),
-        "account_id": clean_value(record.get("AccountId")),
+    invoice_data = {
+        "id": clean_value(
+            record.get("id")
+        ),
+        "object": clean_value(
+            record.get("object")
+        ) or "invoice",
+        "customer": clean_value(
+            record.get("customer")
+        ),
+        "status": clean_value(
+            record.get("status")
+        ),
+        "total": record.get(
+            "total"
+        ),
+        "currency": clean_value(
+            record.get("currency")
+        ),
+        "created": record.get(
+            "created"
+        ),
+        "paid": record.get(
+            "paid"
+        ),
     }
 
-    validated = SalesforceOpportunity.model_validate(
-        opportunity_data
+    validated = StripeInvoice.model_validate(
+        invoice_data
     )
 
-    return validated.model_dump(mode="json")
+    return validated.model_dump(
+        mode="json"
+    )
 
 
 # ============================================================
@@ -221,19 +291,21 @@ def transform_records(
     validator
 ):
     """
-    Clean, deduplicate and validate records.
+    Clean, deduplicate and validate Stripe records.
     """
 
     records = get_records(data)
 
     print(
-        f"Records before duplicate removal: {len(records)}"
+        f"Records before duplicate removal: "
+        f"{len(records)}"
     )
 
     records = remove_duplicates(records)
 
     print(
-        f"Records after duplicate removal: {len(records)}"
+        f"Records after duplicate removal: "
+        f"{len(records)}"
     )
 
     transformed = []
@@ -246,39 +318,50 @@ def transform_records(
 
     for record in records:
 
-        if not isinstance(record, dict):
+        if not isinstance(
+            record,
+            dict
+        ):
             print(
                 "Skipping invalid record: "
                 "not a dictionary"
             )
+
             invalid_count += 1
+
             continue
 
         try:
 
-            # Validate and standardize fields
-            clean_record = validator(record)
+            clean_record = validator(
+                record
+            )
 
-            # ETL metadata
-            clean_record["_source"] = "salesforce"
+            clean_record["_source"] = "stripe"
 
             clean_record["_object"] = object_name
 
-            clean_record["_processed_at"] = processed_time
+            clean_record["_processed_at"] = (
+                processed_time
+            )
 
-            transformed.append(clean_record)
+            transformed.append(
+                clean_record
+            )
 
         except Exception as error:
 
             invalid_count += 1
 
             print(
-                f"Skipping invalid {object_name} record: "
+                f"Skipping invalid "
+                f"{object_name} record: "
                 f"{error}"
             )
 
     print(
-        f"Invalid records skipped: {invalid_count}"
+        f"Invalid records skipped: "
+        f"{invalid_count}"
     )
 
     return transformed
@@ -290,7 +373,9 @@ def transform_records(
 
 def save_json(data, filename):
 
-    output_file = PROCESSED_FOLDER / filename
+    output_file = (
+        PROCESSED_FOLDER / filename
+    )
 
     with open(
         output_file,
@@ -313,75 +398,81 @@ def save_json(data, filename):
 
 
 # ============================================================
-# TRANSFORM ACCOUNTS
+# TRANSFORM CUSTOMERS
 # ============================================================
 
-def transform_accounts():
+def transform_customers():
 
-    print("\nTransforming Accounts...")
+    print("\nTransforming Customers...")
 
-    data = load_json("accounts.json")
+    data = load_json(
+        "customers.json"
+    )
 
-    accounts = transform_records(
+    customers = transform_records(
         data,
-        "Account",
-        validate_account
+        "Customer",
+        validate_customer
     )
 
     save_json(
-        accounts,
-        "accounts.json"
+        customers,
+        "customers.json"
     )
 
-    return accounts
+    return customers
 
 
 # ============================================================
-# TRANSFORM CONTACTS
+# TRANSFORM CHARGES
 # ============================================================
 
-def transform_contacts():
+def transform_charges():
 
-    print("\nTransforming Contacts...")
+    print("\nTransforming Charges...")
 
-    data = load_json("contacts.json")
+    data = load_json(
+        "charges.json"
+    )
 
-    contacts = transform_records(
+    charges = transform_records(
         data,
-        "Contact",
-        validate_contact
+        "Charge",
+        validate_charge
     )
 
     save_json(
-        contacts,
-        "contacts.json"
+        charges,
+        "charges.json"
     )
 
-    return contacts
+    return charges
 
 
 # ============================================================
-# TRANSFORM OPPORTUNITIES
+# TRANSFORM INVOICES
 # ============================================================
 
-def transform_opportunities():
+def transform_invoices():
 
-    print("\nTransforming Opportunities...")
+    print("\nTransforming Invoices...")
 
-    data = load_json("opportunities.json")
+    data = load_json(
+        "invoices.json"
+    )
 
-    opportunities = transform_records(
+    invoices = transform_records(
         data,
-        "Opportunity",
-        validate_opportunity
+        "Invoice",
+        validate_invoice
     )
 
     save_json(
-        opportunities,
-        "opportunities.json"
+        invoices,
+        "invoices.json"
     )
 
-    return opportunities
+    return invoices
 
 
 # ============================================================
@@ -395,7 +486,7 @@ def main():
     )
 
     print(
-        "STARTING SALESFORCE TRANSFORMATION"
+        "STARTING STRIPE TRANSFORMATION"
     )
 
     print(
@@ -404,18 +495,18 @@ def main():
 
     try:
 
-        accounts = transform_accounts()
+        customers = transform_customers()
 
-        contacts = transform_contacts()
+        charges = transform_charges()
 
-        opportunities = transform_opportunities()
+        invoices = transform_invoices()
 
         print(
             "\n=================================================="
         )
 
         print(
-            "SALESFORCE TRANSFORMATION COMPLETED"
+            "STRIPE TRANSFORMATION COMPLETED"
         )
 
         print(
@@ -423,15 +514,18 @@ def main():
         )
 
         print(
-            f"Accounts transformed: {len(accounts)}"
+            f"Customers transformed: "
+            f"{len(customers)}"
         )
 
         print(
-            f"Contacts transformed: {len(contacts)}"
+            f"Charges transformed: "
+            f"{len(charges)}"
         )
 
         print(
-            f"Opportunities transformed: {len(opportunities)}"
+            f"Invoices transformed: "
+            f"{len(invoices)}"
         )
 
         print(
@@ -441,7 +535,7 @@ def main():
     except Exception as error:
 
         print(
-            "\nSALESFORCE TRANSFORMATION FAILED"
+            "\nSTRIPE TRANSFORMATION FAILED"
         )
 
         print(
